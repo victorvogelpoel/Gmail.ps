@@ -23,9 +23,17 @@ function New-GmailSession {
 .Description
     Opens a connection to a Gmail account using the specified credentials and creates a new session. If a generic credential is 
     created using the Windows Credential Manager (address: 'Gmail.ps:default'), a session is automatically created using the 
-    stored credentials each time the cmdlet is executed without a -Credential parameter
+    stored credentials each time the cmdlet is executed without a -Credential parameter.
 .Parameter Credential
     The credentials that will be used to connect to Gmail.
+.Example
+    PS> $gmail = New-GmailSession
+    PS> # play with your gmail...
+
+    Description
+    -----------
+    Authenticating a Gmail session using the stored credential in the Gmail.ps:default entry. 
+    If there is no credential stored a prompt for username and password will be displayed.
 .Link
     Remove-GmailSession
 .Link
@@ -53,6 +61,12 @@ function Remove-GmailSession {
     Closes the connection to Gmail and destroys the session.
 .Parameter Credential
     The credentials that will be used to connect to Gmail.
+.Example
+    PS> $gmail | Remove-GmailSession
+
+    Description
+    -----------
+    Closing an already opened connection to a Gmail account.
 .Link
     New-GmailSession
 .Link
@@ -67,11 +81,11 @@ function Remove-GmailSession {
 function Invoke-GmailSession {
     [CmdletBinding()]
     param (
-        [Parameter(Position = 1, Mandatory = $true)]
-        [ScriptBlock]$ScriptBlock,
-
         [Parameter(Position = 0, Mandatory = $false)]
-        [System.Management.Automation.PSCredential]$Credential = $($cr = (Get-StoredCredential Gmail.ps:default); if ($cr -eq $null) {Get-Credential} else {$cr})
+        [System.Management.Automation.PSCredential]$Credential = $($cr = (Get-StoredCredential Gmail.ps:default); if ($cr -eq $null) {Get-Credential} else {$cr}),
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [ScriptBlock]$ScriptBlock
     )
 
     $gmail = New-GmailSession -Credential $Credential
@@ -82,9 +96,9 @@ function Invoke-GmailSession {
 .Synopsis
     Invokes a block of code on a Gmail session.
 .Description
-    Creates new Gmail session and passes it to a script block. Once the block is executed, the session is automatically closed.
+    Creates a new Gmail session and passes it to a script block. Once the block is executed, the session is automatically closed.
 .Parameter ScriptBlock
-    Script that is executed once a session is opened.
+    A script that is executed once the session is opened.
 .Parameter Credential
     The credentials that will be used to connect to Gmail.
 .Link
@@ -173,13 +187,26 @@ function Get-Mailbox {
     Returns a mailbox.
 .Description
     Returns the Inbox if no parameters are specified, an existing Label or one of the default 
-    Gmail folders (All Mail, Starred, Drafts, Important, Sent Mail, Spam)
+    Gmail folders (All Mail, Starred, Drafts, Important, Sent Mail, Spam).
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Name
     The name of the default Gmail folder to be accessed.
 .Parameter Label
     The name of an existing label to be accessed.
+.Example
+    PS> $inbox = $gmail | Get-Mailbox
+    PS> $inbox | Get-Message -Unread
+
+    Description
+    -----------
+    Get the unread messages in the inbox.
+.Example
+    PS> $gmail | Get-Mailbox "Important" | Get-Message
+
+    Description
+    -----------
+    Get the messages marked as Important by Gmail.
 .Link
     Get-Message
 .Link
@@ -193,30 +220,31 @@ function Get-Message {
         [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [AE.Net.Mail.ImapClient]$Session,
 
-        [switch]$Prefetch,
-        [switch]$Unread,
-        [switch]$Read,
-        [switch]$Answered,
-        [switch]$Draft,
-        [switch]$Undraft,
-        [switch]$Starred,
-        [switch]$Unstarred,
-        [switch]$HasAttachment,
+        [string]$From,
+        [string]$To,
         [DateTime]$On,
         [DateTime]$After,
         [DateTime]$Before,
-        [string]$From,
-        [string]$To,
         [string]$Cc,
         [string]$Bcc,
+        [string]$Subject,
         [string]$Text,
         [string]$Body,
-        [string]$Subject,
-        [string]$Label,
+        [string[]]$Label,
         [string]$FileName,
 
         [ValidateSet("Primary", "Personal", "Social", "Promotions", "Updates", "Forums")]
-        [string]$Category
+        [string]$Category,
+
+        [switch]$Unread,
+        [switch]$Read,
+        [switch]$Starred,
+        [switch]$Unstarred,
+        [switch]$HasAttachment,
+        [switch]$Answered,
+        [switch]$Draft,
+        [switch]$Undraft,
+        [switch]$Prefetch
     )
 
     $imap = @()
@@ -285,7 +313,7 @@ function Get-Message {
     }
     
     if ($Label) {
-        $xgm += 'label:' + $Label
+        $Label | ForEach-Object { $xgm += 'label:' + $_ }
     }
 
     if ($HasAttachment) {
@@ -315,8 +343,8 @@ function Get-Message {
 
     $result = $Session.Search('(' + $criteria + ')');
     $i = 1
-    foreach ($item in $result)
-    {
+
+    foreach ($item in $result) {
         $msg = $Session.GetMessage($item, !$Prefetch, $false)
         AddSessionTo $msg $Session
         Write-Progress -Activity "Gathering messages" -Status "Progress: $($i)/$($result.Count)" -PercentComplete ($i / $result.Count * 100) -Id 90017
@@ -328,6 +356,7 @@ function Get-Message {
     Returns a list of messages.
 .Description
     Returns a (filtered) list of the messages inside a selected mailbox (see Get-Mailbox).
+    The returned messages will have their body and attachments downloaded only if the -Prefetch parameter is specified. 
 
     Every listed message has a set of flags indicating the message's status and properties.
 
@@ -341,52 +370,82 @@ function Get-Message {
 
     Any flag may be unset. An unset flag is the equivalent of "is not" and is represented as a "-" character.
     '--i-a' means the message is not Unread, is not Fetched, is Important, is not Starred and has atleast one attachment.
+
+    Supports automatic name completion for the existing labels.
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Prefetch
-    If specified, fetches the message's body and attachments; otherwise only the headers are downloaded from the server
+    Fetches the message's body and attachments. By default only the headers are downloaded from the server.
 .Parameter Unread
-    Forces only unread messages to be returned
+    Forces only unread messages to be returned.
 .Parameter Read
-    Forces only read messages to be returned
+    Forces only read messages to be returned.
 .Parameter Answered
-    Forces only messages that has been answered to, to be returned
+    Forces only messages that has been answered to, to be returned.
 .Parameter Draft
-    If set, only drafts will be returned
+    If set, only drafts will be returned.
 .Parameter Undraft
-    If set, only non-draft messages will be returned
+    If set, only non-draft messages will be returned.
 .Parameter Starred
-    Indicates only starred mesages to be returned
+    Indicates only starred mesages to be returned.
 .Parameter Unstarred
-    Indicates only mesages that are not marked with Star to be returned
+    Indicates only messages that are not marked with Star to be returned.
 .Parameter On
-    Filters the messages based on an exact date of receiving 
+    Filters the messages based on an exact date of receiving.
 .Parameter After
-    Returns only messages received after a given date
+    Returns only messages received after a given date.
 .Parameter Before
-    Returns only messages received before a given date
+    Returns only messages received before a given date.
 .Parameter From
-    Filters the messages based on the sender's name and email address
+    Filters the messages based on the sender's name and email address.
 .Parameter To
-    Filters the messages based on the recipient's name and email address
+    Filters the messages based on the recipient's name and email address.
 .Parameter Cc
-    Filters the messages based on the Cc recipient's name and email address
+    Filters the messages based on the Cc recipient's name and email address.
 .Parameter Bcc
-    Filters the messages based on the Bcc recipient's name and email address
+    Filters the messages based on the Bcc recipient's name and email address.
 .Parameter Text
-    A text to search the entire message for
+    A text to search the entire message for.
 .Parameter Body
-    A substring to search the message's body for
+    A substring to search the message's body for.
 .Parameter Subject
-    A substring to search the message's subject for
+    A substring to search the message's subject for.
 .Parameter Label
-    Returns only messages having a particular label applied
+    Returns only messages having a particular set of labels applied.
 .Parameter HasAttachment
-    Returns only messages with attachments
+    Returns only messages with attachments.
 .Parameter FileName
-    Returns only messages having attachments with a given name
+    Returns only messages having attachments with a given name.
 .Parameter Category
-    Returns only messages within a particular category
+    Returns only messages within a particular category.
+.Example
+    PS> $inbox = $gmail | Get-Mailbox
+    PS> $inbox | Get-Message -Unread
+
+    Description
+    -----------
+    Get the unread messages in the inbox.
+.Example
+    PS> $gmail | Get-Mailbox "Important" | Get-Message
+
+    Description
+    -----------
+    Get the messages marked as Important by Gmail.
+.Example
+    PS> $inbox | Get-Message -After "2011-06-01" -Before "2012-01-01"
+    PS> $inbox | Get-Message -On "2011-06-01"
+    PS> $inbox | Get-Message -From "x@gmail.com"
+    PS> $inbox | Get-Message -To "y@gmail.com"
+
+    Description
+    -----------
+    Filter with some criteria.
+.Example
+    PS> $inbox | Get-Message -Unread -From "myboss@gmail.com"
+
+    Description
+    -----------
+    Combine flags and options.
 .Link
     Get-Message
 .Link
@@ -422,6 +481,12 @@ function Remove-Message {
     The opened session that will be manipulated.
 .Parameter Message
     The message that will be deleted.
+.Example
+    PS> $inbox | Get-Message -From "x@gmail.com" | Remove-Message
+
+    Description
+    -----------
+    Delete all emails from X.
 .Link
     Get-Message
 .Link
@@ -437,32 +502,29 @@ function Update-Message {
         [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
         [AE.Net.Mail.MailMessage]$Message,
 
-        [Parameter(ParameterSetName = "Seen")]
         [switch]$Read,
 
-        [Parameter(ParameterSetName = "Unseen")]
         [switch]$Unread,
 
-        [Parameter(ParameterSetName = "Unseen")]
-        [Parameter(ParameterSetName = "Seen")]
-        [Parameter(ParameterSetName = "Flagged")]
-        [Parameter(ParameterSetName = "Unflagged")]
-        [switch]$Archive,
-
-        [Parameter(ParameterSetName = "Flagged")]
         [switch]$Star,
 
-        [Parameter(ParameterSetName = "Unflagged")]
         [switch]$Unstar,
+
+        [switch]$Archive,
         
-        [Parameter(ParameterSetName = "Unseen")]
-        [Parameter(ParameterSetName = "Seen")]
-        [Parameter(ParameterSetName = "Flagged")]
-        [Parameter(ParameterSetName = "Unflagged")]
         [switch]$Spam
     )
     
     process {
+
+        if ($Read -and $Unread) {
+            Write-Error "The -Read and -Unread parameters cannot be used together."
+        }
+
+        if ($Star -and $Unstar) {
+            Write-Error "The -Star and -Unstar parameters cannot be used together."
+        }
+
         if ($Archive) {
             $Session.MoveMessage($Message.Uid, "[Gmail]/All Mail")
         }
@@ -513,17 +575,27 @@ function Update-Message {
 .Parameter Message
     The message that will be updated.
 .Parameter Read
-    Marks a message as read
+    Marks a message as read.
 .Parameter Unread
-    Marks a message as undead
+    Marks a message as undead.
 .Parameter Star
-    Flags a message with a Star
+    Flags a message with a Star.
 .Parameter Unstar
-    Removes the star from a message
+    Removes the star from a message.
 .Parameter Archive
-    Archives a message
+    Archives a message.
 .Parameter Spam
-    Forces a message to be marked as spam
+    Forces a message to be marked as spam.
+.Example
+    PS> $messages = $inbox | Get-Message -Unread | Select-Object -Last 10
+    PS> foreach ($msg in $messages) {
+    PS>     $msg | Update-Message -Read # you can use -Unread, -Spam, -Star, -Unstar, -Archive too
+    PS> }
+
+    Description
+    -----------
+    Each message can be manipulated using block style. Remember that 
+    every message in a conversation/thread will come as a separate message.
 .Link
     Get-Message
 .Link
@@ -554,6 +626,13 @@ function Receive-Message {
     The opened session that will be manipulated.
 .Parameter Message
     The message that will be fetched.
+.Example
+    PS> $msg = $inbox | Get-Message -From "x@gmail.com" | Receive-Message
+    PS> $msg.Body # returns the body of the message
+
+    Description
+    -----------
+    To read the actual body of a message you have to first fetch it from the Gmail servers.
 .Link
     Get-Message
 #>
@@ -586,7 +665,9 @@ function Move-Message {
 .Synopsis
     Moves a message.
 .Description
-    Moves a message to a different mailbox or label
+    Moves a message to a different mailbox or label.
+
+    Supports automatic name completion for the existing labels.
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Message
@@ -595,6 +676,18 @@ function Move-Message {
     The name of a mailbox the message will be moved to.
 .Parameter Label
     The name of a label the message will be moved to.
+.Example
+    PS> $msg | Move-Message "All Mail"
+
+    Description
+    -----------
+    Move the message to the All Mail mailbox.
+.Example
+    PS> $msg | Move-Message -Label "Test"
+
+    Description
+    -----------
+    Move the message to the Test label.
 .Link
     Get-Message
 #>
@@ -616,8 +709,89 @@ function Measure-Message {
     Returns the number of messages in a mailbox (supports labels too).
 .Parameter Session
     The opened session that will be manipulated.
+.Example
+    PS> $inbox | Measure-Message
+
+    Description
+    -----------
+    Count the messages in the inbox.
+.Example
+    PS> $gmail | Get-Mailbox "Important" | Measure-Message
+
+    Description
+    -----------
+    Count the important messages.
+.Example
+    PS> # returns 100, the number of messages in `Important`
+    PS> $gmail | Get-Mailbox "Important" | Get-Message -Unread | Measure-Message
+
+    PS> # returns 2, the number of unread messages in `Important`
+    PS> $gmail | Get-Mailbox "Important" | Get-Message -Unread | Measure-Object
+
+    Description
+    -----------
+    Note that Measure-Message will return the number of all messages in the selected mailbox, 
+    not the number of the returned messages (if any). To count the returned messages, use Measure-Object. 
+    In this example we have 2 unread and 98 read messages in the Important mailbox.
 .Link
     Get-Message
+#>
+}
+
+function Get-Conversation {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [AE.Net.Mail.ImapClient]$Session,
+
+        [Parameter(Mandatory = $true, ValueFromPipeline = $true)]
+        [AE.Net.Mail.MailMessage]$Message,
+
+        [switch]$Prefetch
+    )
+
+    process {
+        $thrid = $Message.Headers["X-GM-THRID"].Value
+        $result = $Session.Search('(X-GM-THRID ' + $thrid + ')')
+        $i = 1
+
+        foreach ($item in $result) {
+            $msg = $Session.GetMessage($item, !$Prefetch, $false)
+            AddSessionTo $msg $Session
+            Write-Progress -Activity "Gathering messages within a conversation" -Status "Progress: $($i)/$($result.Count)" -PercentComplete ($i / $result.Count * 100) -Id 90018
+            $i += 1
+        }
+    }
+
+<#
+.Synopsis
+    Returns a list of messages that are part of a conversation.
+.Description
+    Returns a list of messages that are part of a conversation.
+.Parameter Session
+    The opened session that will be manipulated.
+.Parameter Message
+    A message that is part of the wanted conversation.
+.Parameter Prefetch
+    Fetches the conversation's bodies and attachments. By default only the headers are downloaded from the server.
+.Example
+    PS> $gmail | Get-Mailbox Inbox | Get-Message -From z@gmail.com | Get-Conversaion
+
+    Description
+    -----------
+    Searches the Inbox based on the message returned by Get-Message, 
+    and returns all messages that are part of that conversaton and are in the Inbox.
+.Example
+    PS> $gmail | Get-Mailbox "All Mail" | Get-Message -From z@gmail.com | Get-Conversaion
+
+    Description
+    -----------
+    Searches "All Mail" based on the message returned by Get-Message, 
+    and returns all messages that are part of that conversaton.
+.Link
+    Get-Message
+.Link
+    Get-Mailbox
 #>
 }
 
@@ -671,7 +845,7 @@ function Save-Attachment {
 .Synopsis
     Downloads the attachments of a message.
 .Description
-    Downloads the attachments of a message to a local forlder.
+    Downloads the attachments of a message to a local folder.
 .Parameter Message
     The message whose attachments will be downloaded.
 .Parameter Path
@@ -681,9 +855,25 @@ function Save-Attachment {
     exactly as it is typed. No characters are interpreted as wildcards. If the path includes escape characters, enclose it in 
     single quotation marks. Single quotation marks tell Windows PowerShell not to interpret any characters as escape sequences.
 .Parameter PassThru
-    Returns a file representing each downloaded attachment. By default, this cmdlet does not generate any output.
+    Returns a file object representing each downloaded attachment. By default, this cmdlet does not generate any output.
+.Example
+    PS> $gmail | Get-Mailbox -Label "Important" | Get-Message -Prefetch | Save-Attachment $folder
+
+    Description
+    -----------
+    Save all attachments in the "Important" label to a local folder. 
+    Note that without the -Prefetch parameter, no attachments will be downloaded.
+.Example
+    PS> $msg = $inbox | Get-Message -Unread -HasAttachment | Select-Object -Last 1
+    PS> $fetchedMsg = $msg | Receive-Message # or use -Prefetch on Get-Message above
+    PS> $fetchedMsg.Attachments[0].Save($location)
+
+    Description
+    -----------
+    Save just the first attachment from the newest unread email.
 .Link
     Get-Message
+.Link
     Receive-Message
 #>
 }
@@ -725,7 +915,25 @@ function Get-Label {
 .Parameter Session
     The opened session that will be used to fetch all existing labels.
 .Parameter Message
-    The message whose labels will be returned
+    The message whose labels will be returned.
+.Example
+    PS> $msg | Get-Label
+
+    Description
+    -----------
+    Get all labels applied to a message.
+.Example
+    PS> $gmail | Get-Label
+
+    Description
+    -----------
+    Get a list of the defined labels.
+.Example
+    PS> $gmail | Get-Label -Name "SomeLabel" # returns null if the label doesn't exist
+
+    Description
+    -----------
+    Check if a label exists.
 .Link
     New-Label
 .Link
@@ -745,8 +953,7 @@ function New-Label {
         [AE.Net.Mail.ImapClient]$Session
     )
 
-    foreach ($item in $Name)
-    {
+    foreach ($item in $Name) {
         $Session.CreateMailbox($item)
     }
 
@@ -758,7 +965,7 @@ function New-Label {
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Name
-    The of the label that will be created.
+    The name of the label that will be created.
 .Link
     Get-Label
 .Link
@@ -781,8 +988,7 @@ function Remove-Label {
         [AE.Net.Mail.MailMessage]$Message
     )
 
-    foreach ($item in $Name)
-    {
+    foreach ($item in $Name) {
         if ($Message) {
             $Session.RemoveLabels($Name, @($Message))
         } else {
@@ -795,12 +1001,15 @@ function Remove-Label {
     Removes a label from a message or deletes the label from the account.
 .Description
     Removes a label from a message or deletes the label from the account.
+
+    Supports automatic name completion for the existing labels.
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Name
-    The of the label that will be removed.
+    The name(s) of the label(s) that will be removed.
 .Parameter Message
-    The message from which the label will be removed; if not specified the label will be deleted from the account
+    The message from which the label(s) will be removed. If not specified the label(s) will be deleted from the account.
+    Note that all messages that have those labels applied will not be deleted.
 .Link
     Get-Label
 .Link
@@ -829,8 +1038,7 @@ function Set-Label {
     process {
         $labels = $Session | Get-Label | ForEach-Object { $_.Name };
         
-        foreach ($label in $Name)
-        {
+        foreach ($label in $Name) {
             if (!$labels.Contains($label)) {
                 if ($Force) {
                     $Session | New-Label $label | Out-Null
@@ -848,18 +1056,31 @@ function Set-Label {
 
 <#
 .Synopsis
-   Adds a label to a message.
+   Applies a label to a message.
 .Description
-   Adds a label to a message.
+   Applies a label to a message.
 .Parameter Session
     The opened session that will be manipulated.
 .Parameter Message
     The message to which the label will be applied.
 .Parameter Name
-    The name of the label that will be apllied.
+    The name(s) of the label(s) that will be apllied.
 .Parameter Force
     Forces the creation of the label if it doesn't exist. An error will be thrown if the 
-    label doesn't exist and the command is executed without the -Force parameter
+    label doesn't exist and the command is executed without the -Force parameter.
+.Example
+    PS> $msg | Set-Label "Important"
+    PS> $msg | Set-Label "Important","Banking"
+
+    Description
+    -----------
+    Apply a single or multiple labels.
+.Example
+    PS> $msg | Set-Label "Important","Banking" -Force
+
+    Description
+    -----------
+    The first example will raise error if one of the specified labels doesn't exist. To avoid that, label creation can be forced.
 .Link
     Get-Label
 .Link
@@ -1094,9 +1315,10 @@ New-Alias -Name Select-Mailbox -Value Get-Mailbox
 New-Alias -Name Filter-Message -Value Get-Message
 New-Alias -Name Count-Message -Value Measure-Message
 New-Alias -Name Add-Label -Value Set-Label
+New-Alias -Name Get-Thread -Value Get-Conversation
 
 Export-ModuleMember -Alias * -Function New-GmailSession, Remove-GmailSession, Invoke-GmailSession, 
                                        Get-GmailSession, Clear-GmailSession, Get-Mailbox, Get-Message, 
                                        Measure-Message, Remove-Message, Update-Message, Move-Message, 
                                        Get-Label, New-Label, Remove-Label, Set-Label, Receive-Message, 
-                                       Save-Attachment
+                                       Save-Attachment, Get-Conversation
